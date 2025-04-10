@@ -446,3 +446,40 @@ convert_ensembl_to_hgnc <- function(df, gene_column, version) {
   
   return(df)
 }
+
+get_gene_coordinates <- function(df, gene_column, mart = NULL) {
+  # If no mart object is provided, use ensembl human genes by default
+  if (is.null(mart)) {
+    mart <- tryCatch({
+      useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+    }, error = function(e) {
+      message("Could not connect to Ensembl. Trying alternative mirror...")
+      useMart("ensembl", dataset = "hsapiens_gene_ensembl", host = "https://uswest.ensembl.org")
+    })
+  }
+  
+  # Define attributes to retrieve
+  attributes <- c("entrezgene_id", 
+                  "chromosome_name", 
+                  "start_position", 
+                  "end_position", 
+                  "strand")
+  
+  # Get the data from BioMart
+  results <- getBM(attributes = attributes,
+                   filters = "entrezgene_id",
+                   values = df[[gene_column]],
+                   mart = mart)
+  
+  # Clean up the results
+  colnames(results) <- c("entrez_id", "chromosome", "start_position", 
+                         "end_position", "strand")
+  
+  # Convert strand to +/- format
+  results$strand <- ifelse(results$strand == 1, "+", "-")
+  
+  # Filter out non-standard chromosomes (optional)
+  results <- results[grep("^[0-9XYMT]+$", results$chromosome), ]
+  
+  return(results)
+}
