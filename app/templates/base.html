@@ -688,7 +688,6 @@
 
     <script>
         function switchTab(tabName) {
-            // Tab switching logic
             document.querySelectorAll('.tab-content').forEach(content => {
                 content.classList.remove('active');
             });
@@ -696,8 +695,6 @@
                 tab.classList.remove('active');
             });
             document.getElementById(tabName).classList.add('active');
-            
-            // Find the button that triggered this and make it active
             document.querySelectorAll('.tab').forEach(tab => {
                 if (tab.getAttribute('onclick').includes(tabName)) {
                     tab.classList.add('active');
