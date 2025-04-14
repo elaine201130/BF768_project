@@ -11,55 +11,89 @@ library(tidyr)
 library(fgsea)
 
 # Getting the metadata from GEO
-get_metdata <- function(gse_number, gse_matrix_status = TRUE, list_number) {
-  gse_object <- getGEO(gse_number, GSEMatrix = gse_matrix_status)
-  gse_object <- gse_object[[list_number]]
-  gse_metadata <- pData(gse_object)
-  return(gse_metadata)
+get_metadata <- function(file_path) {
+  file <- read_tsv(file_path)
+  return(file)
 }
 
-# Getting the count matrix
-get_count_matrix <- function(count_file, col_to_row = TRUE, colname = NULL) {
-  raw_counts <- read_tsv(count_file)
-  if (col_to_row == TRUE) {
-    raw_counts <- raw_counts %>%
-      column_to_rownames(var = colname)
-    raw_count_matrix <- as.matrix(raw_counts)
-    return(raw_count_matrix)
-  } else {
-    raw_count_matrix <- as.matrix(raw_counts)
-    return(raw_count_matrix)
-  }
-}
+# Select samples (col) based on reference
+selected_samples <- function(count_matrix, reference) {
+  gsm_to_name <- reference %>% 
+    dplyr::select(GSM_ID,Sample_name) %>% 
+    dplyr::mutate(GSM_ID = as.character(GSM_ID))
 
-# Filtering the metadata
-filter_metadata <- function(metadata, col_title, col_group, n = 4, filter_type = "head", exclude_row = NULL) {
-  filtered_metadata <- metadata %>%
-    dplyr::select(title = all_of(col_title), treatment = all_of(col_group)) %>%
-    {
-      if (filter_type == "head") head(., n) else tail(., n)
-    } %>%
-    mutate(condition = if_else(treatment == 'resting', 'control', 'treatment'))
+  sample_cols <- colnames(count_matrix)
   
-  if (!is.null(exclude_row)) {
-    filtered_metadata <- filtered_metadata[!row.names(filtered_metadata) %in% exclude_row, ]
-  }
+  samples_to_keep <- sample_cols[sample_cols %in% c(sample_cols[1], gsm_to_name$GSM_ID)]
+  
+  filtered_metadata <- count_matrix %>%
+    dplyr::select(all_of(samples_to_keep))
+  
+  new_colnames <- colnames(filtered_metadata)
+  new_colnames[-1] <- gsm_to_name$Sample_name[match(new_colnames[-1], gsm_to_name$GSM_ID)]
+  colnames(filtered_metadata) <- new_colnames
   
   return(filtered_metadata)
 }
+  
+  
+# # Getting the count matrix
+# get_count_matrix <- function(count_file, col_to_row = TRUE, colname = NULL) {
+#   raw_counts <- read_tsv(count_file)
+#   if (col_to_row == TRUE) {
+#     raw_counts <- raw_counts %>%
+#       column_to_rownames(var = colname)
+#     raw_count_matrix <- as.matrix(raw_counts)
+#     return(raw_count_matrix)
+#   } else {
+#     raw_count_matrix <- as.matrix(raw_counts)
+#     return(raw_count_matrix)
+#   }
+# }
+
+# # Filtering the metadata
+# filter_metadata <- function(metadata, col_title, col_group, n = 4, filter_type = "head", exclude_row = NULL) {
+#   filtered_metadata <- metadata %>%
+#     dplyr::select(title = all_of(col_title), treatment = all_of(col_group)) %>%
+#     {
+#       if (filter_type == "head") head(., n) else tail(., n)
+#     } %>%
+#     mutate(condition = if_else(treatment == 'resting', 'control', 'treatment'))
+#   
+#   if (!is.null(exclude_row)) {
+#     filtered_metadata <- filtered_metadata[!row.names(filtered_metadata) %in% exclude_row, ]
+#   }
+#   
+#   return(filtered_metadata)
+# }
 
 # Filtering the count matrix
-filter_non_zero <- function(matrix, n=0, start=1, end=NULL) {
+filter_non_zero <- function(matrix, n=0) {
   matrix <- matrix[rowSums(matrix > 0) >= n, ]
-  matrix <- matrix[,start:end]
   return(matrix)
 }
+
+# Filter specific conditions
+filtered_condition <- function(count_matrix, condition){
+  conditions <- grep(condition, colnames(count_matrix), value = TRUE)
+  return(count_matrix[, conditions])
+}
+
+# Filter coldata
+filtered_coldata <- function(ref_file, condition){
+  col_data <- ref_file %>%
+    dplyr::select(Sample_name, Group) %>%
+    dplyr::filter(grepl(condition, Sample_name)) %>%
+    dplyr::mutate(Group = factor(Group, levels = c("Control", "Test")))
+}
+
 # Run deseq2 and returns results as a dataframe
 deseq_results <- function(metadata, count_matrix, design, reference) {
   dds <- DESeqDataSetFromMatrix(countData = count_matrix,
                                 colData = metadata,
                                 design = as.formula(paste("~", design)))
-  dds[[design]] <- relevel(factor(dds[[design]]), ref=reference)
+  colData(dds)[[design]] <- relevel(colData(dds)[[design]], ref = reference)
+  
   dds <- DESeq(dds)
   res <- results(dds)
   res <- res[order(res$padj), ]

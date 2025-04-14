@@ -3,20 +3,27 @@
 source('functions.R')
 ```
 
-# Store metadata 
+# Read files
 ```{r}
-ifnb_study <- getGEO('GSE206478', GSEMatrix = TRUE)
-ifnb_study <- ifnb_study[[1]]
-ifnb_metadata <- get_metdata('GSE206478', TRUE, 1)
+count_path <- './data/GSE153657_raw_counts_GRCh38.p13_NCBI.tsv'
+gsm_ref_path <- './data/GSMid_ref.tsv'
+
+count_matrix <- get_metadata(count_path)
+gsm_ref <- get_metadata(gsm_ref_path)
 ```
 
-# Get count matrix
+# Select wanted samples
+```{r}
+selected_count <- selected_samples(count_matrix, gsm_ref)
+```
+
+# Get count matrix (n/a)
 ```{r}
 ifnb_count_matrix <- get_count_matrix('../IFNB_study/GSE206478_raw_counts_GRCh38.p13_NCBI.tsv', colname = 'GeneID')
 ```
 
 
-# Include only wanted rows/samples from metadata
+# Include only wanted rows/samples from metadata (n/a)
 ```{r}
 #IFNB Study, WTC11-derived microglia
 ifnb_filtered_metadata_WTC11 <- filter_metadata(ifnb_metadata,'title','group:ch1',n=4)
@@ -31,15 +38,22 @@ ifnb_filtered_metadata_H1 <- filter_metadata(ifnb_metadata,'title','group:ch1',n
 # Include only wanted columns/samples from count matrix
 ```{r}
 #IFNB study 
-ifnb_filtered_count_matrix_WTC11 <- filter_non_zero(ifnb_count_matrix,n=2,start=1,end=3)
-ifnb_filtered_count_matrix_H1 <- filter_non_zero(ifnb_count_matrix,n=2,start=4,end=7)
+filtered_count_matrix <- filter_non_zero(selected_metadata,n=2)
+filtered_count_matrix <- column_to_rownames(filtered_count_matrix, var = 'GeneID')
+
+TREM2_KO_count <- filtered_condition(filtered_count_matrix, "^TREM2-KO|^WT")
+TREM2_R47H_count <- filtered_condition(filtered_count_matrix, "^TREM2-R47H|^WT")
+# ifnb_filtered_count_matrix_H1 <- filter_non_zero(ifnb_count_matrix,n=2,start=4,end=7)
 ```
 
 
 # Run DESEq2 and get results
 ```{r}
-WTC11_results <- deseq_results(ifnb_filtered_metadata_WTC11, ifnb_filtered_count_matrix_WTC11, 'condition', 'control')
-H1_results <- deseq_results(ifnb_filtered_metadata_H1, ifnb_filtered_count_matrix_H1, 'condition', 'control')
+TREM2_KO_coldata <- filtered_coldata(gsm_ref, "^TREM2-KO|^WT")
+TREM2_R47H_coldata <- filtered_coldata(gsm_ref, "^TREM2-R47H|^WT")
+
+TREM2_KO_deseq <- deseq_results(TREM2_KO_coldata, TREM2_KO_count, 'Group', 'Control')
+TREM2_R47H_deseq <- deseq_results(TREM2_R47H_coldata, TREM2_R47H_count, 'Group', 'Control')
 ```
 
 
