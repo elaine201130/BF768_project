@@ -59,11 +59,11 @@ selected_samples <- function(count_matrix, reference) {
 #       if (filter_type == "head") head(., n) else tail(., n)
 #     } %>%
 #     mutate(condition = if_else(treatment == 'resting', 'control', 'treatment'))
-#   
+# 
 #   if (!is.null(exclude_row)) {
 #     filtered_metadata <- filtered_metadata[!row.names(filtered_metadata) %in% exclude_row, ]
 #   }
-#   
+# 
 #   return(filtered_metadata)
 # }
 
@@ -99,6 +99,33 @@ deseq_results <- function(metadata, count_matrix, design, reference) {
   res <- res[order(res$padj), ]
   return(as.data.frame(res))
 }
+
+# deseq2 results add columns of hgnc_symbol and description
+deseq_hgnc_name <- function(deseq_df) {
+  res_df <- rownames_to_column(deseq_df, var = "geneID")
+  
+  mart <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+  
+  gene_info <- getBM(
+    attributes = c(
+      "entrezgene_id",
+      "hgnc_symbol",
+      "description"
+    ),
+    filters = "entrezgene_id",
+    values = res_df$geneID,
+    mart = mart
+  )
+  
+  res_df$geneID <- as.character(res_df$geneID)
+  gene_info$entrezgene_id <- as.character(gene_info$entrezgene_id)
+  
+  res_annotated <- res_df %>%
+    left_join(gene_info, by = c("geneID" = "entrezgene_id"))
+  
+  return(res_annotated)
+}
+
 
 # Plot Volcano Plot
 create_volcano_plot <- function(res_dataframe, title = "Volcano Plot", logFC_threshold = 1, padj_threshold=0.05, n_genes_label=5) {
@@ -171,6 +198,64 @@ create_volcano_plot <- function(res_dataframe, title = "Volcano Plot", logFC_thr
   
   return(volcano_plot)
 }
+# Gene annotations (entrez_id, symbol, ensembl_id, chromosome_name, start/end
+# position, strand)
+gene_annotation <- function(full_countmatrix) {
+  entrez_ids <- full_countmatrix %>% 
+    rownames_to_column(var = "GeneID") %>%
+    dplyr::select(GeneID) %>% 
+    pull() %>% 
+    unique() %>%
+    as.character()
+  
+  # Connect to Ensembl BioMart
+  mart <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+  
+  gene_conversion <- getBM(
+    attributes = c(
+      "entrezgene_id",
+      "hgnc_symbol",
+      "ensembl_gene_id",
+      "chromosome_name",
+      "start_position",
+      "end_position",
+      "strand"
+    ),
+    filters = "entrezgene_id",
+    values = entrez_ids,
+    mart = mart
+  )
+  
+  # Ensure proper mapping by removing duplicates
+  gene_conversion <- gene_conversion[!duplicated(gene_conversion$entrezgene_id), ]
+  rownames(gene_conversion) <- gene_conversion$entrezgene_id
+  
+  # Fallback to external_gene_name where HGNC is missing
+  gene_symbol <- gene_conversion$hgnc_symbol
+  missing_symbol <- is.na(gene_symbol) | gene_symbol == ""
+  gene_symbol[missing_symbol] <- gene_conversion$external_gene_name[missing_symbol]
+  still_missing <- is.na(gene_symbol) | gene_symbol == ""
+  gene_symbol[still_missing] <- gene_conversion$entrezgene_id[still_missing]
+  
+  
+  # Assemble final annotated table
+  gene_table <- gene_conversion %>%
+    dplyr::mutate(
+      `HGNC Symbol` = gene_symbol,
+      Strand = ifelse(strand == 1, "+", "-")
+    ) %>%
+    dplyr::select(
+      `Entrez ID` = entrezgene_id,
+      `HGNC Symbol`,
+      `Ensembl ID` = ensembl_gene_id,
+      Chromosome = chromosome_name,
+      Start = start_position,
+      End = end_position,
+      Strand
+    )
+  
+  return(gene_table)
+}
 
 
 # Change NCBI IDs to HGNC symbols
@@ -193,29 +278,35 @@ convert_ncbi_to_hgnc <- function(res_dataframe) {
   gene_conversion <- gene_conversion[!duplicated(gene_conversion$entrezgene_id), ]
   rownames(gene_conversion) <- gene_conversion$entrezgene_id
   
-  # Map NCBI IDs to HGNC symbols
-  new_rownames <- gene_conversion[as.character(ncbi_ids), "hgnc_symbol"]
+  # Match NCBI IDs to HGNC symbols and descriptions
+  gene_symbol <- gene_conversion[as.character(ncbi_ids), "hgnc_symbol"]
+  gene_desc   <- gene_conversion[as.character(ncbi_ids), "description"]
   
-  # Fallback to external gene name if HGNC symbol is missing
-  new_rownames[is.na(new_rownames) | new_rownames == ""] <- 
-    gene_conversion[as.character(ncbi_ids[is.na(new_rownames) | new_rownames == ""]), "external_gene_name"]
   
-  # Fallback to NCBI ID if both HGNC and external gene name are missing
-  new_rownames[is.na(new_rownames) | new_rownames == ""] <- 
-    ncbi_ids[is.na(new_rownames) | new_rownames == ""]
+  # Fallback to external_gene_name where HGNC is missing
+  missing_symbol <- is.na(gene_symbol) | gene_symbol == ""
+  gene_symbol[missing_symbol] <- gene_conversion[as.character(ncbi_ids[missing_symbol]), "external_gene_name"]
   
-  # Identify duplicate gene symbols
-  dup_genes <- new_rownames[duplicated(new_rownames)]
+  # Fallback to Entrez ID if both are missing
+  still_missing <- is.na(gene_symbol) | gene_symbol == ""
+  gene_symbol[still_missing] <- ncbi_ids[still_missing]
+  
+  # Warn about duplicates
+  dup_genes <- gene_symbol[duplicated(gene_symbol)]
   if (length(dup_genes) > 0) {
-    message("Duplicate gene symbols found:")
-    print(dup_genes)
+    message("Duplicate gene symbols found (will be made unique):")
+    print(unique(dup_genes))
   }
   
-  # Make duplicate gene symbols unique
-  new_rownames_unique <- make.unique(new_rownames)
+  # Add gene_symbol and description columns to the dataframe
+  res_dataframe$gene_symbol <- make.unique(gene_symbol)
+  res_dataframe$description <- gene_desc
   
-  # Assign new unique row names to the dataframe
-  rownames(res_dataframe) <- new_rownames_unique
+  # # Make duplicate gene symbols unique
+  # new_rownames_unique <- make.unique(new_rownames)
+  # 
+  # # Assign new unique row names to the dataframe
+  # rownames(res_dataframe) <- new_rownames_unique
   
   return(res_dataframe)
 }
@@ -223,7 +314,7 @@ convert_ncbi_to_hgnc <- function(res_dataframe) {
 # Plot PCA
 perform_pca_plot <- function(count_matrix, metadata, pc_x = 1, pc_y = 2) {
   # Create DESeq2 dataset
-  dds <- DESeqDataSetFromMatrix(countData = count_matrix, colData = metadata, design = ~ title)
+  dds <- DESeqDataSetFromMatrix(countData = count_matrix, colData = metadata, design = ~ 1)
   
   # Perform rlog transformation
   rlog_counts <- rlog(dds, blind = TRUE)
@@ -280,7 +371,7 @@ perform_pca_plot <- function(count_matrix, metadata, pc_x = 1, pc_y = 2) {
 }
 
 # Perform GSEA
-perform_gsea_plot <- function(res_dataframe, geneset_file, min_size = 15, max_size = 500, top_n = 5) {
+perform_gsea_output <- function(res_dataframe, geneset_file, min_size = 15, max_size = 500, top_n = 5) {
   # Load gene sets
   hallmark_geneset <- gmtPathways(geneset_file)
   
@@ -300,6 +391,12 @@ perform_gsea_plot <- function(res_dataframe, geneset_file, min_size = 15, max_si
     minSize = min_size, 
     maxSize = max_size
   ) %>% arrange(desc(NES))  # Sort results by NES
+  
+  #extract genes per pathway
+  all_leading_edge_genes <- fgsea_res %>%
+    dplyr::select(pathway, NES, padj, leadingEdge) %>%
+    tidyr::unnest(leadingEdge) %>%
+    dplyr::rename(gene_id = leadingEdge)
   
   # Separate positive and negative pathways
   positive_pathways <- fgsea_res %>% filter(NES > 0)
@@ -346,11 +443,13 @@ perform_gsea_plot <- function(res_dataframe, geneset_file, min_size = 15, max_si
     scale_y_continuous(expand = expansion(mult = c(0.05, 0.05))) +
     scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 40))
   
-  return(gsea_plot)
+  return(list(
+    plot = gsea_plot,
+    leading_edge_genes = all_leading_edge_genes))
 }
 
 # Regulatory GSEA 
-regulatory_gsea_plot <- function(res_dataframe, geneset_file, min_size = 15, max_size = 500, top_n = 5) {
+regulatory_gsea_plot <- function(res_dataframe, geneset_file, min_size = 15, max_size = 500) {
   # Load gene sets
   hallmark_geneset <- gmtPathways(geneset_file)
   

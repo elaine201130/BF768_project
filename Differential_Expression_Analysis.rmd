@@ -37,7 +37,7 @@ ifnb_filtered_metadata_H1 <- filter_metadata(ifnb_metadata,'title','group:ch1',n
 
 # Include only wanted columns/samples from count matrix
 ```{r}
-#IFNB study 
+ 
 filtered_count_matrix <- filter_non_zero(selected_metadata,n=2)
 filtered_count_matrix <- column_to_rownames(filtered_count_matrix, var = 'GeneID')
 
@@ -45,6 +45,13 @@ TREM2_KO_count <- filtered_condition(filtered_count_matrix, "^TREM2-KO|^WT")
 TREM2_R47H_count <- filtered_condition(filtered_count_matrix, "^TREM2-R47H|^WT")
 # ifnb_filtered_count_matrix_H1 <- filter_non_zero(ifnb_count_matrix,n=2,start=4,end=7)
 ```
+
+# Gene Annotatins
+```{r}
+gene_annotations <- gene_annotation(filtered_count_matrix)
+# write.csv(gene_annotations, "gene_annotation.csv", row.names = FALSE)
+```
+
 
 
 # Run DESEq2 and get results
@@ -56,40 +63,54 @@ TREM2_KO_deseq <- deseq_results(TREM2_KO_coldata, TREM2_KO_count, 'Group', 'Cont
 TREM2_R47H_deseq <- deseq_results(TREM2_R47H_coldata, TREM2_R47H_count, 'Group', 'Control')
 ```
 
+# Add ensembl symbol and description to deseq df
+```{r}
+TREM2_KO_deseq_new <- convert_ncbi_to_hgnc(TREM2_KO_deseq)
+TREM2_KO_deseq_new <- rownames_to_column(TREM2_KO_deseq_new, var = "geneID")
+```
+```{r}
+TREM2_R47H_deseq_new <- convert_ncbi_to_hgnc(TREM2_R47H_deseq)
+TREM2_R47H_deseq_new <- rownames_to_column(TREM2_R47H_deseq_new, var = "geneID")
+```
+
 
 # Convert NCBI to HGNC symbols and plto volcano plot
 ```{r}
-WTC11_results_HGNC <- convert_ncbi_to_hgnc(WTC11_results)
+TREM2_KO_deseq_new <- convert_ncbi_to_hgnc(TREM2_KO_deseq)
 ```
 ```{r}
-WTC11_volcano_plot <- create_volcano_plot(WTC11_results_HGNC, title="WTC11-derived microglia: Untreated vs IFNβ-treated")
-WTC11_volcano_plot
+TREM2_KO_volcano_plot <- create_volcano_plot(TREM2_KO_results_HGNC, title="TREM2_KO vs Wild Type")
+TREM2_KO_volcano_plot
 ```
 ```{r}
-H1_results_HGNC <- convert_ncbi_to_hgnc(H1_results)
+TREM2_R47H_results_HGNC <- convert_ncbi_to_hgnc(TREM2_R47H_deseq)
 ```
 ```{r}
-H1_volcano_plot <- create_volcano_plot(H1_results_HGNC, title="H1-derived microglia: Untreated vs IFNβ-treated")
-H1_volcano_plot
+TREM2_R47H_volcano_plot <- create_volcano_plot(TREM2_R47H_results_HGNC, title="TREM2_R47H vs Wild Type")
+TREM2_R47H_volcano_plot
 ```
 
 #PCA
 ```{r}
-ifnb_filtered_metadata <- filter_metadata(ifnb_metadata,'title','group:ch1',n=8, exclude_row = "GSM6255119")
-ifnb_filtered_count_matrix <- filter_non_zero(ifnb_count_matrix,n=2,start=1,end=7)
-pca_plot <- perform_pca_plot(ifnb_filtered_count_matrix, ifnb_filtered_metadata)
+# ifnb_filtered_metadata <- filter_metadata(ifnb_metadata,'title','group:ch1',n=8, exclude_row = "GSM6255119")
+# ifnb_filtered_count_matrix <- filter_non_zero(ifnb_count_matrix,n=2,start=1,end=7)
+gsm_group_ref <- gsm_ref %>% dplyr::select(GSM_ID, Group)
+pca_plot <- perform_pca_plot(filtered_count_matrix, gsm_group_ref)
 pca_plot
 ```
 
 # GSEA
 ```{r}
-WTC11_gsea_plot <- perform_gsea_plot(WTC11_results,'h.all.v2024.1.Hs.entrez.gmt')
-WTC11_gsea_plot
+# TREM2_KO_gsea_output <- perform_gsea_output(TREM2_KO_deseq,'./data/h.all.v2024.1.Hs.entrez.gmt')
+# TREM2_KO_gsea_output_c2 <- perform_gsea_output(TREM2_KO_deseq,'./data/c2.cp.v2024.1.Hs.entrez.gmt')
+# TREM2_KO_gsea_output$plot
+write.csv(TREM2_KO_gsea_output_c2$leading_edge_genes, "TREM2_KO_gsea_genes_c2.csv", row.names = FALSE)
 ```
 
 ```{r}
-H1_gsea_plot <- perform_gsea_plot(H1_results,'h.all.v2024.1.Hs.entrez.gmt')
-H1_gsea_plot
+TREM2_R47H_gsea_output_c2 <- perform_gsea_output(TREM2_R47H_deseq,'./data/c2.cp.v2024.1.Hs.entrez.gmt')
+# TREM2_R47H_gsea_output$plot
+write.csv(TREM2_R47H_gsea_output_c2$leading_edge_genes, "TREM2_R47H_gsea_genes_c2.csv", row.names = FALSE)
 ```
 
 
